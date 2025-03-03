@@ -45,7 +45,7 @@ The results are logged by `wandb`, so you need to `wandb login` first to see the
     ```bash
     bash scripts/train_policy.sh flowpolicy adroit_hammer 0129 0 0
     ```
-    This will train a flowpolicy policy on the `hammer` task in Adroit environment using point cloud modality. By default we **save** the ckpt (optional in the script).
+    This will train a flowpolicy policy on the `hammer` task in Adroit environment using point cloud modality.
 
 3. Evaluate a saved policy or use it for inference. Please set  For example:
     ```bash
@@ -68,15 +68,15 @@ If you find this repository helpful, please consider citing:
 @article{zhang2024flowpolicy,
       title={FlowPolicy: Enabling Fast and Robust 3D Flow-based Policy via Consistency Flow Matching for Robot Manipulation}, 
       author={Qinglun Zhang and Zhen Liu and Haoqiang Fan and Guanghui Liu and Bing Zeng and Shuaicheng Liu},
-      year={2024}
+      year={2024},
       eprint={2412.04987},
       archivePrefix={arXiv},
       primaryClass={cs.RO},
-      url={https://arxiv.org/abs/2412.04987
+      url={https://arxiv.org/abs/2412.04987}
 }
 ```
 # 🥰 Contact
-If you have any questions, feel free to contact Qinglun Zhang at [zhangqinglun@std.uestc.edu.cn](mailto:zhangqinglun@std.uestc.edu.cn).
+If you have any questions, feel free to contact Qinglun Zhang at [zhangqinglun26@std.uestc.edu.cn](mailto:zhangqinglun26@std.uestc.edu.cn).
 
 
 

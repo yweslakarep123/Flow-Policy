@@ -1,0 +1,39 @@
+name: flowpolicy
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10.9
+  - pip
+  - pytorch=2.1.0
+  - torchvision=0.16.0
+  - torchaudio=2.1.0
+  - pytorch-cuda=11.8
+  - cudatoolkit=11.8
+  - numpy>=1.24.0,<2.0.0
+  - scipy>=1.10.0
+  - pip:
+    # Gymnasium dan Robotics
+    - gymnasium>=0.29.0,<0.31.0
+    - gymnasium-robotics>=1.2.0,<2.0.0
+    
+    # MuJoCo untuk simulasi (sudah include viewer built-in)
+    - mujoco>=2.3.0,<3.0.0
+    
+    # Point cloud processing
+    - open3d>=0.17.0,<0.20.0
+    - point-cloud-utils>=0.30.0
+    
+    # Utilities
+    - tqdm>=4.65.0
+    - tensorboard>=2.14.0
+    - matplotlib>=3.7.0
+    - einops>=0.7.0
+    
+    # Optional untuk logging
+    - wandb>=0.15.0
+    
+    # PyYAML untuk config
+    - pyyaml>=6.0

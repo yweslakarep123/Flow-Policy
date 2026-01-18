@@ -1,0 +1,35 @@
+# Requirements untuk FlowPolicy dengan PyTorch CUDA support
+# Python version: 3.10 atau 3.11 (disarankan 3.10.9)
+
+# PyTorch dengan CUDA - install via conda untuk CUDA support terbaik
+# Untuk CUDA 11.8: torch==2.1.0+cu118
+# Untuk CUDA 12.1: torch==2.1.0+cu121
+# Install dengan: conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
+# ATAU: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Core dependencies
+numpy>=1.24.0,<2.0.0
+scipy>=1.10.0
+
+# Gymnasium dan Robotics
+gymnasium>=0.29.0,<0.31.0
+gymnasium-robotics>=1.2.0,<2.0.0
+
+# MuJoCo untuk simulasi (sudah include viewer built-in via mujoco.viewer)
+mujoco>=2.3.0,<3.0.0
+
+# Point cloud processing
+open3d>=0.17.0,<0.20.0
+point-cloud-utils>=0.30.0
+
+# Utilities
+tqdm>=4.65.0
+tensorboard>=2.14.0
+matplotlib>=3.7.0
+einops>=0.7.0
+
+# Optional untuk logging
+wandb>=0.15.0
+
+# PyYAML untuk config
+pyyaml>=6.0

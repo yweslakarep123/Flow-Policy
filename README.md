@@ -1,82 +1,124 @@
-# [AAAI 2025 Oral] FlowPolicy: Enabling Fast and Robust 3D Flow-based Policy via Consistency Flow Matching for Robot Manipulation
+# FlowPolicy: 3D Flow-based Policy for Franka Kitchen
 
-<h4 align = "center">Qinglun Zhang<sup>1,2 *</sup>, Zhen Liu<sup>1,2 *</sup>, Haoqiang Fan<sup>2</sup>, Guanghui Liu<sup>1</sup>, Bing Zeng<sup>1</sup>, Shuaicheng Liu<sup>1,2</sup></h4>
+Implementasi FlowPolicy untuk environment Franka Kitchen berbasis vision menggunakan Consistency Flow Matching berdasarkan paper [FlowPolicy: Enabling Fast and Robust 3D Flow-based Policy via Consistency Flow Matching for Robot Manipulation](2412.04987v2.pdf).
 
-<h4 align = "center"> <sup>1</sup>University of Electronic Science and Technology of China</center></h4>
-<h4 align = "center"> <sup>2</sup>Megvii Technology</center></h4>
+## Fitur
 
-This is the official implementation of our AAAI2025 paper: FlowPolicy: Enabling Fast and Robust 3D Flow-based Policy via Consistency Flow Matching for Robot Manipulation. [Paper](https://arxiv.org/abs/2412.04987)
+- **3D Vision Representation**: Menggunakan Point Cloud Encoder (berbasis PointNet++) untuk representasi visual 3D
+- **Consistency Flow Matching**: Single-step inference untuk efisiensi tinggi (7x lebih cepat dibanding diffusion-based methods)
+- **Velocity Field Normalization**: Normalisasi self-consistency pada velocity field untuk straight-line flows
+- **Franka Kitchen Support**: Wrapper untuk environment Franka Kitchen dengan vision support
 
-## News
-* **2025.1.18** Our paper has been selected for **oral presentation** at AAAI 2025.
-* **2024.12.17** The final version of our paper is now available on [arXiv](https://arxiv.org/abs/2412.04987).
-* **2024.12.10** Our paper has been accepted by AAAI 2025.
+## Instalasi
 
-## Abstract
+### Menggunakan Conda (Disarankan untuk CUDA)
 
-Robots can acquire complex manipulation skills by learning policies from expert demonstrations, which is often known as vision-based imitation learning. Generating policies based on diffusion and flow matching models has been shown to be effective, particularly in robotic manipulation tasks. However, recursion-based approaches are inference inefficient in working from noise distributions to policy distributions, posing a challenging trade-off between efficiency and quality. This motivates us to propose FlowPolicy, a novel framework for fast policy generation based on consistency flow matching and 3D vision. Our approach refines the flow dynamics by normalizing the self-consistency of the velocity field, enabling the model to derive task execution policies in a single inference step. Specifically, FlowPolicy conditions on the observed 3D point cloud, where consistency flow matching directly defines straight-line flows from different time states to the same action space, while simultaneously constraining their velocity values, that is, we approximate the trajectories from noise to robot actions by normalizing the self-consistency of the velocity field within the action space, thus improving the inference efficiency. We validate the effectiveness of FlowPolicy in Adroit and Metaworld, demonstrating a 7x increase in inference speed while maintaining competitive average success rates compared to state-of-the-art methods. 
+```bash
+# Buat environment dari environment.yml
+conda env create -f environment.yml
+conda activate flowpolicy
 
-## Pipeline
+# Verifikasi CUDA
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+```
 
-<div align="center">
-  <img src="pipeline.png" alt="flwopolicy" width="100%">
-</div>
-The above section is a visualization of FlowPolicy. By defining a straight-line flow the data can flow the fastest from the noise distribution to the action distribution (Adroit: Open the door). The following section shows the details of FlowPolicy. Given a certain number of expert presentations, it is first converted into 3D point clouds. The 3D point clouds and the robot state are then fed into two encoders to obtain the compact 3D visual representation and the robot state embedding, respectively. Finally, a straight-line flow is learned by conditional consistency flow matching to generate high-quality robot actions and perform the corresponding tasks (Metaworld: Assembly) at real-time inference speed.
+### Menggunakan pip (Alternatif)
 
-# 💻 Installation
+```bash
+# Install PyTorch dengan CUDA terlebih dahulu (pilih sesuai CUDA version)
+# Untuk CUDA 11.8:
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
-See [install.md](install.md) for installation instructions. 
+# Install dependencies lainnya
+pip install -r requirements.txt
+```
 
-# 📚 Data
-You could generate demonstrations by yourself using our provided expert policies.  Generated demonstrations are under `$YOUR_REPO_PATH/FlowPolicy/data/`.
+**Catatan**: Untuk dukungan CUDA terbaik, gunakan Conda. Lihat [SETUP.md](SETUP.md) untuk panduan lengkap.
 
-# 🛠️ Usage
-Scripts for generating demonstrations, training, and evaluation are all provided in the `scripts/` folder. 
+**Versi Python**: Python 3.10 atau 3.11 (disarankan 3.10.9)
 
-The results are logged by `wandb`, so you need to `wandb login` first to see the results and videos.
+## Penggunaan
 
-1. Generate demonstrations by `gen_demonstration_adroit.sh` and `gen_demonstration_metaworld.sh`. See the scripts for details. For example:
-    ```bash
-    bash scripts/gen_demonstration_adroit.sh hammer
-    ```
-    This will generate demonstrations for the `hammer` task in Adroit environment. The data will be saved in `FlowPolicy/data/` folder automatically.
+### Training
 
-2. Train and evaluate a policy with behavior cloning. For example:
-    ```bash
-    bash scripts/train_policy.sh flowpolicy adroit_hammer 0129 0 0
-    ```
-    This will train a flowpolicy policy on the `hammer` task in Adroit environment using point cloud modality.
+```bash
+# Basic training
+python train.py --env_name FrankaKitchen-v1 --num_demos 50 --epochs 100
 
-3. Evaluate a saved policy or use it for inference. Please set  For example:
-    ```bash
-    bash scripts/eval_policy.sh flowpolicy adroit_hammer 0129 0 0
-    ```
-    This will evaluate the saved flowpolicy policy you just trained. **Note: the evaluation script is only provided for deployment/inference. For benchmarking, please use the results logged in wandb during training.**
+# Dengan RGB features
+python train.py --env_name FrankaKitchen-v1 --num_demos 50 --epochs 100 --use_rgb
 
+# Custom configuration
+python train.py \
+    --env_name FrankaKitchen-v1 \
+    --tasks microwave kettle \
+    --num_demos 50 \
+    --epochs 100 \
+    --batch_size 32 \
+    --lr 1e-4 \
+    --num_points 1024 \
+    --use_rgb
+```
 
-# 🏷️ License
-This repository is released under the MIT license.
+### Inference
 
-# 🙏 Acknowledgement
+```bash
+# Basic inference
+python inference.py --checkpoint_path checkpoints/best_model.pt
 
-Our code is built upon [3D Diffusion Policy](https://github.com/YanjieZe/3D-Diffusion-Policy), [Consistency_FM](https://github.com/YangLing0818/consistency_flow_matching),  [VRL3](https://github.com/microsoft/VRL3), and [Metaworld](https://github.com/Farama-Foundation/Metaworld). We would like to thank the authors for their excellent works.
+# Dengan rendering
+python inference.py --checkpoint_path checkpoints/best_model.pt --render
 
-# 🥰 Citation
-If you find this repository helpful, please consider citing:
+# Multiple episodes
+python inference.py --checkpoint_path checkpoints/best_model.pt --num_episodes 20
+```
+
+## Struktur Proyek
 
 ```
-@article{zhang2024flowpolicy,
-      title={FlowPolicy: Enabling Fast and Robust 3D Flow-based Policy via Consistency Flow Matching for Robot Manipulation}, 
-      author={Qinglun Zhang and Zhen Liu and Haoqiang Fan and Guanghui Liu and Bing Zeng and Shuaicheng Liu},
-      year={2024},
-      eprint={2412.04987},
-      archivePrefix={arXiv},
-      primaryClass={cs.RO},
-      url={https://arxiv.org/abs/2412.04987}
-}
+FlowPolicy/
+├── models/
+│   ├── point_cloud_encoder.py   # Point Cloud Encoder (PointNet++)
+│   ├── flow_matching.py         # Consistency Flow Matching model
+│   └── __init__.py
+├── policies/
+│   ├── flow_policy.py           # FlowPolicy main implementation
+│   └── __init__.py
+├── envs/
+│   ├── franka_kitchen_wrapper.py  # Franka Kitchen wrapper dengan vision
+│   └── __init__.py
+├── utils/
+│   ├── data_utils.py            # Data processing utilities
+│   ├── training_utils.py        # Training utilities
+│   └── __init__.py
+├── train.py                     # Training script
+├── inference.py                 # Inference script
+├── config.py                    # Configuration file
+├── requirements.txt             # Dependencies
+└── README.md                    # Documentation
 ```
-# 🥰 Contact
-If you have any questions, feel free to contact Qinglun Zhang at [zhangqinglun26@std.uestc.edu.cn](mailto:zhangqinglun26@std.uestc.edu.cn).
 
+## Arsitektur
 
+### FlowPolicy Components
 
+1. **Point Cloud Encoder**: Encodes 3D point cloud observations ke feature vectors
+2. **Consistency Flow Matching**: Models straight-line flows dari noise ke action space
+3. **Velocity Network**: Neural network untuk memprediksi velocity field
+
+### Key Features
+
+- **Single-step inference**: Menggunakan consistency flow matching untuk generate actions dalam 1 step
+- **3D vision conditioning**: Conditions pada 3D point cloud observations
+- **Velocity normalization**: Normalisasi self-consistency untuk straight-line flows
+
+## Catatan Implementasi
+
+- Environment wrapper mengkonversi RGB-D observations ke point clouds
+- Point cloud encoder menggunakan architecture berbasis PointNet++
+- Flow matching menggunakan straight-line flows dengan velocity consistency
+- Training menggunakan flow matching loss dengan timestep sampling
+
+## Referensi
+
+Paper: [FlowPolicy: Enabling Fast and Robust 3D Flow-based Policy via Consistency Flow Matching for Robot Manipulation](https://arxiv.org/abs/2412.04987)

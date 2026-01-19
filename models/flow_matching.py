@@ -4,6 +4,7 @@ Implementasi berdasarkan paper FlowPolicy untuk single-step inference
 """
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from einops import rearrange
 
@@ -150,6 +151,7 @@ class ConsistencyFlowMatching(nn.Module):
     def generate(self, condition, num_steps=1):
         """
         Generate action dari noise dalam single step atau multi-step
+        Berdasarkan Consistency Flow Matching formula
         
         Args:
             condition: (B, condition_dim) conditional features
@@ -160,24 +162,34 @@ class ConsistencyFlowMatching(nn.Module):
         batch_size = condition.shape[0]
         device = condition.device
         
-        # Sample noise
-        action = self.sample_noise(batch_size, device)
+        # Sample noise dari distribusi awal
+        x0 = self.sample_noise(batch_size, device)  # noise
         
         if num_steps == 1:
             # Single-step inference untuk consistency flow matching
-            t = torch.ones(batch_size, device=device)
-            velocity = self.compute_flow(action, t, condition)
-            # Straight-line flow: x_1 = x_0 + v(x_1, t=1)
-            # Iterasi untuk konsistensi
-            for _ in range(3):  # Fixed-point iteration
-                velocity = self.compute_flow(action, t, condition)
-                action = velocity  # Update action
-            return action
+            # Formula: x_1 = x_0 + v(x_0 + (x_1 - x_0), t=1)
+            # Untuk straight-line flow: x(t) = (1-t)x_0 + t*x_1
+            # Velocity: v(x(t), t) = x_1 - x_0
+            # Single-step: x_1 = x_0 + v(x_0, t=1) (fixed-point iteration)
+            t1 = torch.ones(batch_size, device=device)
+            
+            # Fixed-point iteration untuk consistency
+            x1 = x0  # Initialize
+            for _ in range(5):  # Fixed-point iterations (biasanya 3-5 iterasi)
+                # Compute velocity at x1
+                v = self.compute_flow(x1, t1, condition)
+                # Update: x_1 = x_0 + v(x_1, t=1)
+                x1 = x0 + v
+            
+            return x1
         else:
-            # Multi-step inference (optional)
+            # Multi-step inference dengan Euler method
             dt = 1.0 / num_steps
+            x = x0
+            
             for i in range(num_steps):
                 t = torch.ones(batch_size, device=device) * (i + 1) * dt
-                velocity = self.compute_flow(action, t, condition)
-                action = action + dt * velocity
-            return action
+                v = self.compute_flow(x, t, condition)
+                x = x + dt * v
+            
+            return x

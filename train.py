@@ -74,9 +74,10 @@ def train(args):
         use_rgb=args.use_rgb
     ).to(device)
     
-    # Create optimizer
-    optimizer = optim.Adam(policy.parameters(), lr=args.lr)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    # Create optimizer dengan weight decay untuk regularization
+    optimizer = optim.AdamW(policy.parameters(), lr=args.lr, weight_decay=1e-5)
+    # Learning rate scheduler dengan warmup
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
     
     # Create tensorboard writer
     os.makedirs(args.log_dir, exist_ok=True)

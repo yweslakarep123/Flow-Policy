@@ -107,6 +107,7 @@ class FlowPolicy(nn.Module):
     def compute_loss(self, point_cloud, action_gt, t, rgb_features=None):
         """
         Compute training loss untuk FlowPolicy
+        Berdasarkan Flow Matching formula untuk straight-line paths
         
         Args:
             point_cloud: (B, N, 3) point cloud observation
@@ -119,18 +120,22 @@ class FlowPolicy(nn.Module):
         # Encode observation
         condition = self.encode_observation(point_cloud, rgb_features)  # (B, feature_dim)
         
-        # Sample noisy action (interpolasi antara noise dan action_gt)
-        noise = torch.randn_like(action_gt)
-        noisy_action = (1 - t.unsqueeze(-1)) * noise + t.unsqueeze(-1) * action_gt
+        # Sample noise
+        x0 = torch.randn_like(action_gt)  # noise distribution
+        x1 = action_gt  # data distribution (ground truth action)
         
-        # Predict velocity
-        velocity_pred = self.flow_matching(noisy_action, t, condition)  # (B, action_dim)
+        # Straight-line interpolation path: x(t) = (1-t)x_0 + t*x_1
+        # Noisy action at time t
+        x_t = (1 - t.unsqueeze(-1)) * x0 + t.unsqueeze(-1) * x1  # (B, action_dim)
         
         # Target velocity untuk straight-line flow
-        # v(t) = action_gt - noise (untuk straight-line dari noise ke action_gt)
-        velocity_target = action_gt - noise
+        # v(x(t), t) = x_1 - x_0 (constant velocity untuk straight line)
+        v_target = x1 - x0  # (B, action_dim)
         
-        # Flow matching loss
-        flow_loss = nn.functional.mse_loss(velocity_pred, velocity_target)
+        # Predict velocity
+        v_pred = self.flow_matching(x_t, t, condition)  # (B, action_dim)
+        
+        # Flow matching loss: MSE antara predicted dan target velocity
+        flow_loss = nn.functional.mse_loss(v_pred, v_target, reduction='mean')
         
         return flow_loss

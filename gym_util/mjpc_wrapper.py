@@ -5,7 +5,7 @@ import torch
 import os
 
 from termcolor import cprint
-from flow_policy_3d.gym_util.mujoco_point_cloud import PointCloudGenerator
+from gym_util.mujoco_point_cloud import PointCloudGenerator
 from typing import NamedTuple, Any
 from dm_env import StepType
 

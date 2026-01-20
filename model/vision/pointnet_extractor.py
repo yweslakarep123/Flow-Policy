@@ -234,12 +234,20 @@ class FlowPolicyEncoder(nn.Module):
         self.use_pc_color = use_pc_color
         self.pointnet_type = pointnet_type
         if pointnet_type == "mlp":
-            if use_pc_color:
-                pointcloud_encoder_cfg.in_channels = 6
-                self.extractor = PointNetEncoderXYZRGB(**pointcloud_encoder_cfg)
+            # Convert to dict if it's SimpleNamespace or other object
+            if hasattr(pointcloud_encoder_cfg, '__dict__'):
+                cfg_dict = dict(pointcloud_encoder_cfg.__dict__)
+            elif isinstance(pointcloud_encoder_cfg, dict):
+                cfg_dict = dict(pointcloud_encoder_cfg)
             else:
-                pointcloud_encoder_cfg.in_channels = 3
-                self.extractor = PointNetEncoderXYZ(**pointcloud_encoder_cfg)
+                cfg_dict = {}
+            
+            if use_pc_color:
+                cfg_dict['in_channels'] = 6
+                self.extractor = PointNetEncoderXYZRGB(**cfg_dict)
+            else:
+                cfg_dict['in_channels'] = 3
+                self.extractor = PointNetEncoderXYZ(**cfg_dict)
         else:
             raise NotImplementedError(f"pointnet_type: {pointnet_type}")
 

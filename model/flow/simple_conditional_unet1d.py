@@ -5,10 +5,10 @@ import torch.nn as nn
 import einops
 from einops.layers.torch import Rearrange
 from termcolor import cprint
-from flow_policy_3d.model.flow.conv1d_components import (
+from model.flow.conv1d_components import (
     Downsample1d, Upsample1d, Conv1dBlock)
-from flow_policy_3d.model.flow.positional_embedding import SinusoidalPosEmb
-from flow_policy_3d.common.model_util import print_params
+from model.flow.positional_embedding import SinusoidalPosEmb
+from common.model_util import print_params
 
 
 logger = logging.getLogger(__name__)

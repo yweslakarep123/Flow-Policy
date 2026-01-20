@@ -1,7 +1,7 @@
 from typing import Optional
 import numpy as np
 import numba
-from flow_policy_3d.common.replay_buffer import ReplayBuffer
+from common.replay_buffer import ReplayBuffer
 
 
 @numba.jit(nopython=True)

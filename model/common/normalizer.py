@@ -1,12 +1,12 @@
-from typing import Union, Dict
+from typing import Union, Dict, Any
 
 import unittest
 import zarr
 import numpy as np
 import torch
 import torch.nn as nn
-from flow_policy_3d.common.pytorch_util import dict_apply
-from flow_policy_3d.model.common.dict_of_tensor_mixin import DictOfTensorMixin
+from common.pytorch_util import dict_apply
+from model.common.dict_of_tensor_mixin import DictOfTensorMixin
 
 
 class LinearNormalizer(DictOfTensorMixin):
@@ -24,7 +24,7 @@ class LinearNormalizer(DictOfTensorMixin):
         fit_offset=True):
         if isinstance(data, dict):
             for key, value in data.items():
-                self.params_dict[key] =  _fit(value, 
+                fitted_params = _fit(value, 
                     last_n_dims=last_n_dims,
                     dtype=dtype,
                     mode=mode,
@@ -32,6 +32,9 @@ class LinearNormalizer(DictOfTensorMixin):
                     output_min=output_min,
                     range_eps=range_eps,
                     fit_offset=fit_offset)
+                # _fit can return dict for nested dicts, or single params dict (nn.ParameterDict)
+                # Both cases should be stored directly
+                self.params_dict[key] = fitted_params
         else:
             self.params_dict['_default'] = _fit(data, 
                     last_n_dims=last_n_dims,
@@ -55,8 +58,45 @@ class LinearNormalizer(DictOfTensorMixin):
         if isinstance(x, dict):
             result = dict()
             for key, value in x.items():
-                params = self.params_dict[key]
-                result[key] = _normalize(value, params, forward=forward)
+                # First, try to find key directly in params_dict
+                if key in self.params_dict:
+                    params = self.params_dict[key]
+                    # Handle nested dicts: if params is ParameterDict (from nested dict fit), recursively normalize
+                    # Check if params is a nested ParameterDict (doesn't have 'scale' key) or single value params (has 'scale' key)
+                    if isinstance(value, dict) and isinstance(params, nn.ParameterDict) and 'scale' not in params:
+                        # Create a temporary normalizer for nested dict
+                        nested_normalizer = LinearNormalizer()
+                        nested_normalizer.params_dict = params
+                        result[key] = nested_normalizer._normalize_impl(value, forward=forward)
+                    elif isinstance(params, nn.ParameterDict) and 'scale' not in params:
+                        # params is nested ParameterDict but value is not dict
+                        # This happens when we fit with nested dict but normalize with flat dict
+                        # Try to access params[key] if key exists
+                        if key in params:
+                            # params[key] should be a ParameterDict with 'scale' key
+                            result[key] = _normalize(value, params[key], forward=forward)
+                        else:
+                            raise RuntimeError(f"Key '{key}' not found in nested params. Available keys: {list(params.keys())}")
+                    elif isinstance(params, nn.ParameterDict) and 'scale' in params:
+                        # params has 'scale' key, so it's a single value params
+                        result[key] = _normalize(value, params, forward=forward)
+                    else:
+                        # Fallback: try to normalize directly
+                        result[key] = _normalize(value, params, forward=forward)
+                else:
+                    # Key not found - might be nested structure
+                    # Check if any param is a nested ParameterDict that contains this key
+                    found = False
+                    for param_key, param_value in self.params_dict.items():
+                        if isinstance(param_value, nn.ParameterDict) and 'scale' not in param_value:
+                            # This is a nested ParameterDict
+                            if key in param_value:
+                                # Found key in nested params
+                                result[key] = _normalize(value, param_value[key], forward=forward)
+                                found = True
+                                break
+                    if not found:
+                        raise RuntimeError(f"Key '{key}' not found in params_dict. Available keys: {list(self.params_dict.keys())}")
             return result
         else:
             if '_default' not in self.params_dict:
@@ -179,7 +219,7 @@ class SingleFieldLinearNormalizer(DictOfTensorMixin):
 
 
 
-def _fit(data: Union[torch.Tensor, np.ndarray, zarr.Array],
+def _fit(data: Union[torch.Tensor, np.ndarray, zarr.Array, dict],
         last_n_dims=1,
         dtype=torch.float32,
         mode='limits',
@@ -190,6 +230,15 @@ def _fit(data: Union[torch.Tensor, np.ndarray, zarr.Array],
     assert mode in ['limits', 'gaussian']
     assert last_n_dims >= 0
     assert output_max > output_min
+
+    # Handle nested dicts recursively
+    if isinstance(data, dict):
+        # Return a ParameterDict of fitted params for nested dicts
+        result = nn.ParameterDict()
+        for key, value in data.items():
+            fitted_params = _fit(value, last_n_dims, dtype, mode, output_max, output_min, range_eps, fit_offset)
+            result[key] = fitted_params
+        return result
 
     # convert data to torch and type
     if isinstance(data, zarr.Array):

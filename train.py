@@ -51,54 +51,166 @@ def train(args):
     
     # Create shape_meta for FlowPolicy
     # Get sample to infer shapes
-    sample = dataset[0]
+    try:
+        sample = dataset[0]
+    except Exception as e:
+        print(f"Error getting sample from dataset: {e}")
+        print(f"Dataset length: {len(dataset)}")
+        raise
+    
+    # Debug: print sample keys
+    print(f"\nSample keys: {list(sample.keys())}")
+    for key, value in sample.items():
+        if isinstance(value, dict):
+            print(f"  {key}: dict with keys {list(value.keys())}")
+            for sub_key, sub_value in value.items():
+                if torch.is_tensor(sub_value):
+                    print(f"    {sub_key}: shape={sub_value.shape}")
+        elif torch.is_tensor(value):
+            print(f"  {key}: shape={value.shape}")
+    
+    # Helper function to convert shape to tuple
+    def get_shape_tensor(tensor_or_array):
+        """Convert tensor/array shape to tuple"""
+        if torch.is_tensor(tensor_or_array):
+            return tuple(tensor_or_array.shape[1:])  # Remove sequence dimension
+        elif isinstance(tensor_or_array, np.ndarray):
+            return tuple(tensor_or_array.shape[1:])
+        else:
+            return None
+    
+    # Get action shape
+    action_data = sample.get('action', sample.get('actions', None))
+    if action_data is None:
+        raise ValueError("No 'action' or 'actions' key found in sample!")
+    action_shape = get_shape_tensor(action_data)
     
     shape_meta = {
         'action': {
-            'shape': sample['action'].shape[1:]  # Remove sequence dimension
+            'shape': action_shape
         },
         'obs': {}
     }
     
     # Parse observation shapes
     if 'obs' in sample:
-        if isinstance(sample['obs'], dict):
-            for key, value in sample['obs'].items():
-                shape_meta['obs'][key] = {'shape': value.shape[1:]}
+        obs_data = sample['obs']
+        if isinstance(obs_data, dict):
+            for key, value in obs_data.items():
+                shape = get_shape_tensor(value)
+                if shape is not None:
+                    shape_meta['obs'][key] = {'shape': shape}
         else:
-            shape_meta['obs']['obs'] = {'shape': sample['obs'].shape[1:]}
+            shape = get_shape_tensor(obs_data)
+            if shape is not None:
+                shape_meta['obs']['obs'] = {'shape': shape}
     
     # Ensure point_cloud and agent_pos are in shape_meta
     if 'point_cloud' not in shape_meta['obs']:
         # Try to infer from sample
         if 'obs' in sample and isinstance(sample['obs'], dict):
             if 'point_cloud' in sample['obs']:
-                shape_meta['obs']['point_cloud'] = {'shape': sample['obs']['point_cloud'].shape[1:]}
+                shape = get_shape_tensor(sample['obs']['point_cloud'])
+                if shape is not None:
+                    shape_meta['obs']['point_cloud'] = {'shape': shape}
+                else:
+                    shape_meta['obs']['point_cloud'] = {'shape': (args.num_points, 3)}
             else:
                 # Default point cloud shape
                 shape_meta['obs']['point_cloud'] = {'shape': (args.num_points, 3)}
-        
+        else:
+            # Default point cloud shape
+            shape_meta['obs']['point_cloud'] = {'shape': (args.num_points, 3)}
+    
     if 'agent_pos' not in shape_meta['obs']:
         # Try to infer or use default
         if 'obs' in sample and isinstance(sample['obs'], dict) and 'agent_pos' in sample['obs']:
-            shape_meta['obs']['agent_pos'] = {'shape': sample['obs']['agent_pos'].shape[1:]}
+            shape = get_shape_tensor(sample['obs']['agent_pos'])
+            if shape is not None:
+                shape_meta['obs']['agent_pos'] = {'shape': shape}
+            else:
+                shape_meta['obs']['agent_pos'] = {'shape': (9,)}
         else:
-            # Default robot state dimension (adjust based on your environment)
-            shape_meta['obs']['agent_pos'] = {'shape': (9,)}  # 7 arm + 2 gripper
+            # Try to infer from action shape (usually same as robot state)
+            if action_shape and len(action_shape) == 1:
+                shape_meta['obs']['agent_pos'] = {'shape': action_shape}
+            else:
+                # Default robot state dimension
+                shape_meta['obs']['agent_pos'] = {'shape': (9,)}  # 7 arm + 2 gripper
+    
+    # Convert all shapes to tuples (not torch.Size)
+    def convert_shape_meta(meta):
+        """Recursively convert shape_meta to use tuples instead of torch.Size"""
+        if isinstance(meta, dict):
+            result = {}
+            for key, value in meta.items():
+                if key == 'shape' and isinstance(value, (torch.Size, tuple)):
+                    # Convert torch.Size to tuple
+                    result[key] = tuple(value)
+                else:
+                    result[key] = convert_shape_meta(value)
+            return result
+        return meta
+    
+    shape_meta = convert_shape_meta(shape_meta)
+    
+    # IMPORTANT: dict_apply with lambda x: x['shape'] expects structure like:
+    # obs_shape_meta = {'obs': SomeObj, 'point_cloud': SomeObj, ...}
+    # where SomeObj has a 'shape' attribute/key.
+    # But dict_apply recurses into nested dicts, so if SomeObj is {'shape': (75,)},
+    # it will recurse into it and try to apply lambda to (75,), causing error.
+    # 
+    # The correct structure is to have obs_shape_meta values DIRECTLY be the shapes:
+    # obs_shape_meta = {'obs': (75,), 'point_cloud': (1024, 3), ...}
+    # Then dict_apply(obs_shape_meta, lambda x: x) returns the same dict.
+    
+    # Flatten the obs structure: extract 'shape' from each nested dict
+    if 'obs' in shape_meta:
+        obs_meta = shape_meta['obs']
+        if isinstance(obs_meta, dict):
+            flattened_obs = {}
+            for key, value in obs_meta.items():
+                if isinstance(value, dict) and 'shape' in value:
+                    # Extract shape from nested dict
+                    flattened_obs[key] = tuple(value['shape']) if isinstance(value['shape'], (torch.Size, tuple, list)) else value['shape']
+                elif isinstance(value, (tuple, torch.Size, list)):
+                    # Already a shape
+                    flattened_obs[key] = tuple(value)
+                else:
+                    # Unknown format, keep as is
+                    flattened_obs[key] = value
+            shape_meta['obs'] = flattened_obs
     
     print(f'Shape meta: {shape_meta}')
+    
+    # Debug: print what dict_apply will see
+    print(f'\nDebug - obs_shape_meta structure (before dict_apply):')
+    if 'obs' in shape_meta:
+        def print_nested_dict(d, indent=0, max_depth=3, current_depth=0):
+            if current_depth >= max_depth:
+                return
+            for key, value in d.items():
+                prefix = '  ' * indent
+                if isinstance(value, dict):
+                    print(f"{prefix}{key}: dict")
+                    if 'shape' in value:
+                        print(f"{prefix}  shape: {type(value['shape']).__name__} = {value['shape']}")
+                    else:
+                        print_nested_dict(value, indent + 1, max_depth, current_depth + 1)
+                else:
+                    print(f"{prefix}{key}: {type(value).__name__} = {value}")
+        print_nested_dict(shape_meta['obs'])
     
     # Create FlowPolicy model
     print('Creating FlowPolicy model...')
     
     # Point cloud encoder config
-    from types import SimpleNamespace
-    pointcloud_encoder_cfg = SimpleNamespace(
-        in_channels=6 if args.use_pc_color else 3,
-        out_channels=args.encoder_output_dim,
-        use_layernorm=args.use_layernorm,
-        final_norm=args.final_norm if hasattr(args, 'final_norm') else 'none'
-    )
+    pointcloud_encoder_cfg = {
+        'in_channels': 6 if args.use_pc_color else 3,
+        'out_channels': args.encoder_output_dim,
+        'use_layernorm': args.use_layernorm,
+        'final_norm': args.final_norm if hasattr(args, 'final_norm') else 'none'
+    }
     
     policy = FlowPolicy(
         shape_meta=shape_meta,

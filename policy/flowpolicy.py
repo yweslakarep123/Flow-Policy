@@ -61,7 +61,9 @@ class FlowPolicy(BasePolicy):
             raise NotImplementedError(f"Unsupported action shape {action_shape}")
         
         obs_shape_meta = shape_meta['obs']
-        obs_dict = dict_apply(obs_shape_meta, lambda x: x['shape'])
+        # obs_shape_meta is already flattened: {'obs': (75,), 'point_cloud': (1024, 3), ...}
+        # So we just use it directly without dict_apply extraction
+        obs_dict = obs_shape_meta
         
         # point cloud encoder
         obs_encoder = FlowPolicyEncoder(observation_space=obs_dict,

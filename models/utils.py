@@ -17,7 +17,7 @@
 """
 
 import torch
-import flow_policy_3d.sde_lib
+import sde_lib
 import numpy as np
 
 

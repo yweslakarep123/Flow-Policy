@@ -1,1 +1,1 @@
-from flow_policy_3d.gym_util.mjpc_wrapper import MujocoPointcloudWrapperAdroit
+from gym_util.mjpc_wrapper import MujocoPointcloudWrapperAdroit

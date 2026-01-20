@@ -1,5 +1,7 @@
 import sys
-sys.path.append('FlowPolicy/flow_policy_3d')
+import os
+# Add parent directory to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from typing import Dict
 import math
 import torch
@@ -9,14 +11,14 @@ from termcolor import cprint
 import copy
 import time
 import numpy as np
-from flow_policy_3d.sde_lib import ConsistencyFM
-from flow_policy_3d.model.common.normalizer import LinearNormalizer
-from flow_policy_3d.policy.base_policy import BasePolicy
-from flow_policy_3d.model.flow.conditional_unet1d import ConditionalUnet1D
-from flow_policy_3d.model.flow.mask_generator import LowdimMaskGenerator
-from flow_policy_3d.common.pytorch_util import dict_apply
-from flow_policy_3d.common.model_util import print_params
-from flow_policy_3d.model.vision.pointnet_extractor import FlowPolicyEncoder
+from sde_lib import ConsistencyFM
+from model.common.normalizer import LinearNormalizer
+from policy.base_policy import BasePolicy
+from model.flow.conditional_unet1d import ConditionalUnet1D
+from model.flow.mask_generator import LowdimMaskGenerator
+from common.pytorch_util import dict_apply
+from common.model_util import print_params
+from model.vision.pointnet_extractor import FlowPolicyEncoder
 import warnings
 warnings.filterwarnings("ignore")
 

@@ -1,8 +1,8 @@
 from typing import Dict
 import torch
 import torch.nn as nn
-from flow_policy_3d.model.common.module_attr_mixin import ModuleAttrMixin
-from flow_policy_3d.model.common.normalizer import LinearNormalizer
+from model.common.module_attr_mixin import ModuleAttrMixin
+from model.common.normalizer import LinearNormalizer
 
 class BasePolicy(ModuleAttrMixin):
     # init accepts keyword argument shape_meta, see config/task/*_image.yaml

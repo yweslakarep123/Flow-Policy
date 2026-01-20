@@ -1,5 +1,32 @@
 from typing import Optional, Dict
 import os
+import torch
+
+
+def save_checkpoint(checkpoint_path, model, optimizer, scheduler, epoch, loss, args):
+    """Save checkpoint"""
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict() if scheduler is not None else None,
+        'loss': loss,
+        'args': args
+    }
+    torch.save(checkpoint, checkpoint_path)
+    print(f"Checkpoint saved to {checkpoint_path}")
+
+
+def load_checkpoint(checkpoint_path, model, optimizer=None, scheduler=None):
+    """Load checkpoint"""
+    checkpoint = torch.load(checkpoint_path)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    if optimizer is not None and 'optimizer_state_dict' in checkpoint:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    if scheduler is not None and 'scheduler_state_dict' in checkpoint and checkpoint['scheduler_state_dict'] is not None:
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    return checkpoint
+
 
 class TopKCheckpointManager:
     def __init__(self,

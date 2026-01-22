@@ -9,6 +9,99 @@ from torch.utils.data import Dataset
 from typing import Dict, List, Optional
 import os
 import glob
+from pathlib import Path
+
+
+def find_hf_cache_path(dataset_name: str = "jdvakil/RoboSet_Sim") -> Optional[str]:
+    """
+    Mencari path dataset di HuggingFace cache
+    
+    Args:
+        dataset_name: Nama dataset di HuggingFace (format: username/dataset_name)
+    
+    Returns:
+        Path ke snapshot dataset di HF cache, atau None jika tidak ditemukan
+    """
+    # Convert dataset name to cache folder name
+    # e.g., "jdvakil/RoboSet_Sim" -> "datasets--jdvakil--RoboSet_Sim"
+    cache_folder_name = f"datasets--{dataset_name.replace('/', '--')}"
+    hf_cache_base = Path.home() / ".cache" / "huggingface" / "hub" / cache_folder_name
+    
+    if not hf_cache_base.exists():
+        return None
+    
+    # Cari folder snapshots
+    snapshots_dir = hf_cache_base / "snapshots"
+    if not snapshots_dir.exists():
+        return None
+    
+    # Ambil snapshot terbaru (biasanya hanya ada satu)
+    snapshot_dirs = [d for d in snapshots_dir.iterdir() if d.is_dir()]
+    if not snapshot_dirs:
+        return None
+    
+    # Ambil snapshot pertama (atau terbaru berdasarkan modifikasi time)
+    snapshot_path = max(snapshot_dirs, key=lambda p: p.stat().st_mtime)
+    return str(snapshot_path)
+
+
+def resolve_data_path(data_path: str, task_name: Optional[str] = None) -> str:
+    """
+    Resolve data path, mencoba HF cache jika path tidak ditemukan
+    
+    Args:
+        data_path: Path yang diberikan user (bisa empty string untuk force HF cache)
+        task_name: Nama task (optional)
+    
+    Returns:
+        Resolved path ke dataset
+    """
+    # Jika path kosong atau tidak ada, coba cari di HF cache
+    if not data_path or not os.path.exists(data_path):
+        if data_path:
+            print(f"Path {data_path} tidak ditemukan, mencoba mencari di HuggingFace cache...")
+        else:
+            print("Mencari dataset di HuggingFace cache...")
+        
+        hf_cache_path = find_hf_cache_path()
+        
+        if hf_cache_path is None:
+            if data_path:
+                raise ValueError(
+                    f"Data path tidak ditemukan: {data_path}\n"
+                    f"Dan dataset juga tidak ditemukan di HuggingFace cache."
+                )
+            else:
+                raise ValueError(
+                    "Dataset tidak ditemukan di HuggingFace cache.\n"
+                    "Pastikan dataset sudah didownload dengan: huggingface-cli download jdvakil/RoboSet_Sim"
+                )
+        
+        print(f"Dataset ditemukan di HuggingFace cache: {hf_cache_path}")
+        
+        # Jika task_name diberikan, coba cari di subfolder
+        if task_name:
+            # Coba beberapa kemungkinan struktur folder
+            possible_paths = [
+                os.path.join(hf_cache_path, task_name),
+                os.path.join(hf_cache_path, "FK1-v4(human)", "human_demos_by_task", task_name),
+                os.path.join(hf_cache_path, "FK1-v4(expert)", task_name),
+                os.path.join(hf_cache_path, "DAPG(human)", task_name),
+                os.path.join(hf_cache_path, "DAPG(expert)", task_name),
+            ]
+            
+            for path in possible_paths:
+                if os.path.exists(path):
+                    print(f"Task {task_name} ditemukan di: {path}")
+                    return path
+            
+            # Jika tidak ditemukan dengan task_name, return base path dan biarkan dataset loader mencari
+            print(f"Task {task_name} tidak ditemukan di subfolder spesifik, menggunakan base path: {hf_cache_path}")
+        
+        return hf_cache_path
+    
+    # Jika path sudah ada, gunakan langsung
+    return data_path
 
 
 class RoboSetDataset(Dataset):
@@ -462,6 +555,7 @@ def load_robo_set_dataset(
     data_path: str,
     task_name: Optional[str] = None,
     horizon: int = 16,
+    use_hf_cache: bool = True,
     **kwargs
 ):
     """
@@ -471,10 +565,17 @@ def load_robo_set_dataset(
         data_path: Path ke dataset folder
         task_name: Nama task (optional), contoh: 'FK1_MicroOpenRandom_v2d-v4'
         horizon: Horizon untuk action prediction
+        use_hf_cache: Jika True, akan otomatis mencari di HF cache jika path tidak ditemukan
     
     Returns:
         dataset: RoboSetDataset instance
     """
+    # Resolve path (mencoba HF cache jika perlu)
+    if use_hf_cache:
+        data_path = resolve_data_path(data_path, task_name)
+    elif not os.path.exists(data_path):
+        raise ValueError(f"Data path tidak ditemukan: {data_path}")
+    
     if task_name:
         # Construct path to task-specific folder
         task_path = os.path.join(data_path, task_name)

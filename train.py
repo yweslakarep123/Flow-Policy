@@ -33,11 +33,17 @@ def train(args):
     logger = setup_logger(args.log_dir)
     
     # Load dataset
-    print(f'Loading dataset from {args.data_path}...')
+    # Jika data_path tidak diberikan, gunakan HF cache
+    if args.data_path is None:
+        print('Data path tidak diberikan, menggunakan HuggingFace cache...')
+        args.data_path = ""  # Empty string akan trigger HF cache lookup
+    
+    print(f'Loading dataset from {args.data_path if args.data_path else "HuggingFace cache"}...')
     dataset = load_robo_set_dataset(
-        data_path=args.data_path,
+        data_path=args.data_path if args.data_path else "",
         task_name=args.task_name,
         horizon=args.horizon,
+        use_hf_cache=args.use_hf_cache,
         key_blacklist=args.key_blacklist
     )
     
@@ -259,16 +265,93 @@ def train(args):
         if 'action' in sample:
             all_actions.append(sample['action'].numpy())
     
+    # Check for NaN/Inf in data before fitting
+    def check_data_validity(data, name):
+        if isinstance(data, dict):
+            result = {}
+            for k, v in data.items():
+                result[k] = check_data_validity(v, f"{name}.{k}")
+            return result
+        elif isinstance(data, np.ndarray):
+            data = data.copy()  # Make a copy to avoid modifying original
+            if np.any(np.isnan(data)):
+                print(f"WARNING: NaN found in {name}, replacing with 0")
+                data = np.nan_to_num(data, nan=0.0)
+            if np.any(np.isinf(data)):
+                print(f"WARNING: Inf found in {name}, clipping to [-1e6, 1e6]")
+                data = np.clip(data, -1e6, 1e6)
+            return data
+        else:
+            return data
+    
     if all_actions:
-        normalizer.fit({'action': np.concatenate(all_actions, axis=0)})
+        action_data = np.concatenate(all_actions, axis=0)
+        action_data = check_data_validity(action_data, 'action')
+        print(f"\nFitting normalizer for actions...")
+        print(f"  Shape: {action_data.shape}")
+        print(f"  Stats: min={action_data.min():.4f}, max={action_data.max():.4f}, mean={action_data.mean():.4f}, std={action_data.std():.4f}")
+        normalizer.fit({'action': action_data})
+    
     if all_obs:
         if isinstance(all_obs[0], dict):
             obs_dict = {}
             for key in all_obs[0].keys():
-                obs_dict[key] = np.concatenate([o[key] for o in all_obs], axis=0)
+                obs_data = np.concatenate([o[key] for o in all_obs], axis=0)
+                obs_data = check_data_validity(obs_data, f'obs.{key}')
+                obs_dict[key] = obs_data
+                print(f"Obs.{key} stats: min={obs_data.min():.4f}, max={obs_data.max():.4f}, mean={obs_data.mean():.4f}, std={obs_data.std():.4f}")
             normalizer.fit({'obs': obs_dict})
         else:
-            normalizer.fit({'obs': np.concatenate(all_obs, axis=0)})
+            obs_data = np.concatenate(all_obs, axis=0)
+            obs_data = check_data_validity(obs_data, 'obs')
+            normalizer.fit({'obs': obs_data})
+            print(f"Obs stats: min={obs_data.min():.4f}, max={obs_data.max():.4f}, mean={obs_data.mean():.4f}, std={obs_data.std():.4f}")
+    
+    # Move normalizer parameters to device
+    # ParameterDict stores Parameter objects which are Tensors
+    # We need to move all parameters recursively
+    def move_paramdict_to_device(pd, dev):
+        """Recursively move ParameterDict parameters to device"""
+        if isinstance(pd, torch.nn.ParameterDict):
+            for key in list(pd.keys()):
+                value = pd[key]
+                if isinstance(value, torch.nn.ParameterDict):
+                    move_paramdict_to_device(value, dev)
+                elif isinstance(value, (torch.Tensor, torch.nn.Parameter)):
+                    # Replace with Parameter on correct device
+                    new_param = torch.nn.Parameter(value.data.to(dev), requires_grad=False)
+                    pd[key] = new_param
+    
+    if hasattr(normalizer, 'params_dict'):
+        for key, value in normalizer.params_dict.items():
+            if isinstance(value, torch.nn.ParameterDict):
+                move_paramdict_to_device(value, device)
+            elif isinstance(value, torch.Tensor):
+                normalizer.params_dict[key] = value.to(device)
+    
+    print('Normalizer parameters moved to device')
+    
+    # Validate normalizer parameters (check for NaN/Inf)
+    def validate_normalizer_params(pd, path=""):
+        if isinstance(pd, torch.nn.ParameterDict):
+            for key, value in pd.items():
+                if isinstance(value, torch.nn.ParameterDict):
+                    validate_normalizer_params(value, f"{path}.{key}" if path else key)
+                elif isinstance(value, torch.Tensor):
+                    if torch.any(torch.isnan(value)):
+                        print(f"ERROR: NaN in normalizer param at {path}.{key}")
+                        raise ValueError(f"NaN in normalizer parameter {path}.{key}")
+                    if torch.any(torch.isinf(value)):
+                        print(f"ERROR: Inf in normalizer param at {path}.{key}")
+                        raise ValueError(f"Inf in normalizer parameter {path}.{key}")
+                    # Check for very small scale values that could cause issues
+                    if 'scale' in key.lower() and torch.any(torch.abs(value) < 1e-8):
+                        print(f"WARNING: Very small scale values at {path}.{key}, min={torch.abs(value).min()}")
+    
+    if hasattr(normalizer, 'params_dict'):
+        for key, value in normalizer.params_dict.items():
+            if isinstance(value, torch.nn.ParameterDict):
+                validate_normalizer_params(value, key)
     
     policy.set_normalizer(normalizer)
     
@@ -302,23 +385,128 @@ def train(args):
         
         pbar = tqdm(dataloader, desc=f'Epoch {epoch+1}/{args.epochs}')
         for batch in pbar:
-            # Move batch to device
-            batch_device = {}
-            for key, value in batch.items():
-                if isinstance(value, dict):
-                    batch_device[key] = {k: v.to(device) for k, v in value.items()}
-                elif torch.is_tensor(value):
-                    batch_device[key] = value.to(device)
+            # Move batch to device (recursively handle nested dicts)
+            def move_to_device(obj):
+                if isinstance(obj, dict):
+                    return {k: move_to_device(v) for k, v in obj.items()}
+                elif torch.is_tensor(obj):
+                    return obj.to(device)
+                elif isinstance(obj, np.ndarray):
+                    # Convert numpy array to tensor and move to device
+                    return torch.from_numpy(obj).to(device)
+                elif isinstance(obj, (list, tuple)):
+                    return type(obj)([move_to_device(item) for item in obj])
                 else:
-                    batch_device[key] = value
+                    return obj
+            
+            batch_device = move_to_device(batch)
+            
+            # Debug: verify all tensors are on correct device
+            def check_device(obj, path=""):
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        check_device(v, f"{path}.{k}" if path else k)
+                elif torch.is_tensor(obj):
+                    if obj.device != device:
+                        print(f"ERROR: Tensor at {path} is on {obj.device}, expected {device}, shape={obj.shape}")
+                elif isinstance(obj, (list, tuple)):
+                    for i, item in enumerate(obj):
+                        check_device(item, f"{path}[{i}]")
+                elif isinstance(obj, np.ndarray):
+                    print(f"WARNING: Numpy array at {path} not converted to tensor, shape={obj.shape}")
+            
+            # Check device for first batch only
+            if epoch == 0 and num_batches == 0:
+                print("\n=== Checking device placement ===")
+                check_device(batch_device)
+                print("=== End device check ===\n")
             
             optimizer.zero_grad()
+            
+            # Check for NaN/Inf in batch before computing loss
+            def check_batch_validity(batch_data, path=""):
+                if isinstance(batch_data, dict):
+                    for k, v in batch_data.items():
+                        check_batch_validity(v, f"{path}.{k}" if path else k)
+                elif torch.is_tensor(batch_data):
+                    if torch.any(torch.isnan(batch_data)):
+                        print(f"ERROR: NaN found in batch at {path}")
+                        return False
+                    if torch.any(torch.isinf(batch_data)):
+                        print(f"ERROR: Inf found in batch at {path}")
+                        return False
+                return True
+            
+            if not check_batch_validity(batch_device):
+                print("Skipping batch due to NaN/Inf")
+                continue
             
             # Compute loss
             loss, loss_dict = policy.compute_loss(batch_device)
             
+            # Check for NaN/Inf in loss
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"\nERROR: Loss is NaN/Inf: {loss.item()}")
+                print(f"  Loss dict: {loss_dict}")
+                print(f"  Epoch: {epoch+1}, Batch: {num_batches}")
+                # Try to get more info
+                with torch.no_grad():
+                    # Check normalized data
+                    try:
+                        nobs = policy.normalizer.normalize(batch_device['obs'])
+                        nactions = policy.normalizer['action'].normalize(batch_device['action'])
+                        
+                        obs_has_nan = False
+                        if isinstance(nobs, dict):
+                            for k, v in nobs.items():
+                                if torch.is_tensor(v) and torch.any(torch.isnan(v)):
+                                    print(f"  Normalized obs.{k} has NaN")
+                                    obs_has_nan = True
+                        else:
+                            if torch.is_tensor(nobs) and torch.any(torch.isnan(nobs)):
+                                print(f"  Normalized obs has NaN")
+                                obs_has_nan = True
+                        
+                        if torch.any(torch.isnan(nactions)):
+                            print(f"  Normalized actions has NaN")
+                        
+                        # Check raw data ranges
+                        if 'obs' in batch_device:
+                            if isinstance(batch_device['obs'], dict):
+                                for k, v in batch_device['obs'].items():
+                                    if torch.is_tensor(v):
+                                        print(f"  Raw obs.{k}: min={v.min():.4f}, max={v.max():.4f}, mean={v.mean():.4f}")
+                            else:
+                                v = batch_device['obs']
+                                if torch.is_tensor(v):
+                                    print(f"  Raw obs: min={v.min():.4f}, max={v.max():.4f}, mean={v.mean():.4f}")
+                        
+                        if 'action' in batch_device:
+                            v = batch_device['action']
+                            if torch.is_tensor(v):
+                                print(f"  Raw action: min={v.min():.4f}, max={v.max():.4f}, mean={v.mean():.4f}")
+                    except Exception as e:
+                        print(f"  Error checking normalized data: {e}")
+                
+                print("  Suggestion: Try reducing learning rate (--lr 1e-5) or check data normalization\n")
+                continue
+            
             # Backward pass
             loss.backward()
+            
+            # Check for NaN gradients
+            has_nan_grad = False
+            for name, param in policy.named_parameters():
+                if param.grad is not None:
+                    if torch.any(torch.isnan(param.grad)):
+                        print(f"WARNING: NaN gradient in {name}, zeroing it")
+                        param.grad.zero_()
+                        has_nan_grad = True
+                    if torch.any(torch.isinf(param.grad)):
+                        print(f"WARNING: Inf gradient in {name}, clipping it")
+                        param.grad = torch.clamp(param.grad, -1e6, 1e6)
+                        has_nan_grad = True
+            
             torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=args.grad_clip)
             optimizer.step()
             
@@ -376,12 +564,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train FlowPolicy with RoboSet dataset')
     
     # Data args
-    parser.add_argument('--data_path', type=str, required=True,
-                       help='Path to RoboSet dataset folder')
+    parser.add_argument('--data_path', type=str, default=None,
+                       help='Path to RoboSet dataset folder. Jika tidak diberikan atau tidak ditemukan, akan otomatis mencari di HuggingFace cache (~/.cache/huggingface/hub/datasets--jdvakil--RoboSet_Sim)')
     parser.add_argument('--task_name', type=str, default=None,
                        help='Task name (optional), e.g., FK1_MicroOpenRandom_v2d-v4')
     parser.add_argument('--key_blacklist', nargs='+', default=[],
                        help='Keys to exclude from dataset')
+    parser.add_argument('--use_hf_cache', type=bool, default=True,
+                       help='Gunakan HuggingFace cache jika data_path tidak ditemukan (default: True)')
     parser.add_argument('--horizon', type=int, default=16,
                        help='Horizon for action prediction')
     parser.add_argument('--num_points', type=int, default=1024,
